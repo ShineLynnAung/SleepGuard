@@ -52,6 +52,7 @@ class MonitorService {
   void updateConfig(DetectionConfig config) {
     _config = config;
     _inactivityService.updateTimeout(config.inactivityTimeoutMinutes);
+    _platformService.setNativeInactivityTimeout(config.inactivityTimeoutMinutes * 60);
   }
 
   Future<void> startMonitoring() async {
@@ -67,6 +68,9 @@ class MonitorService {
     }
 
     await _platformService.startForegroundService();
+    await _platformService.setNativeInactivityTimeout(
+      _config.inactivityTimeoutMinutes * 60,
+    );
 
     _inactivitySub = _inactivityService.inactivityStateStream.listen(
       _onInactivityChanged,
@@ -82,6 +86,7 @@ class MonitorService {
     }
     _inactivityService.resetInteraction();
     _cameraService.resetBlocked();
+    _platformService.resetNativeInteraction();
   }
 
   void _onInactivityChanged(bool isInactive) {
@@ -168,6 +173,7 @@ class MonitorService {
 
     _inactivityService.stop();
     await _cameraService.stop();
+    await _platformService.hideOverlay();
     await _platformService.stopForegroundService();
 
     _state = MonitorState.idle;

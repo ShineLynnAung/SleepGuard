@@ -17,7 +17,6 @@
 
     <application
         android:label="SleepGuard"
-        android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
 
         <activity

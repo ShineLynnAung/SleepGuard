@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../domain/enums/monitor_state.dart';
 import '../../data/repositories/settings_repository.dart';
+import '../../data/services/platform_service.dart';
 import '../providers/monitor_provider.dart';
 import '../providers/settings_provider.dart';
 
@@ -14,24 +16,72 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late AnimationController _pulseController;
+  StreamSubscription<int>? _overlaySub;
+  bool _wasMinimizedWithOverlay = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _checkDeviceAdmin();
     _startMonitoringIfNeeded();
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 1),
     )..repeat(reverse: true);
+    _overlaySub = PlatformService.touchController.touchStream.listen((ts) {
+      if (ts == -1 && mounted) {
+        ref.read(stopMonitoringProvider)();
+      }
+    });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _overlaySub?.cancel();
     _pulseController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      _onAppBackgrounded();
+    } else if (state == AppLifecycleState.resumed) {
+      _checkOverlayExitOnResume();
+    }
+  }
+
+  Future<void> _onAppBackgrounded() async {
+    final isMonitoring = ref.read(monitorStateProvider).valueOrNull == MonitorState.monitoring;
+    if (!isMonitoring) return;
+
+    try {
+      final platform = ref.read(platformServiceProvider);
+      if (!await platform.isOverlayPermissionGranted()) {
+        await platform.requestOverlayPermission();
+        if (!await platform.isOverlayPermissionGranted()) return;
+      }
+      _wasMinimizedWithOverlay = true;
+      await platform.showOverlay();
+    } catch (_) {}
+  }
+
+  Future<void> _checkOverlayExitOnResume() async {
+    if (!_wasMinimizedWithOverlay) return;
+    _wasMinimizedWithOverlay = false;
+
+    try {
+      final showing = await ref.read(platformServiceProvider).isOverlayShowing();
+      if (showing) {
+        ref.read(resetInteractionProvider)();
+      } else if (mounted) {
+        ref.read(stopMonitoringProvider)();
+      }
+    } catch (_) {}
   }
 
   Future<void> _checkDeviceAdmin() async {
@@ -393,11 +443,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     ref.read(cancelWarningProvider)();
   }
 
-  void _toggleMonitoring() {
+  Future<void> _toggleMonitoring() async {
     final state = ref.read(monitorStateProvider).valueOrNull;
     if (state == MonitorState.monitoring) {
       ref.read(stopMonitoringProvider)();
     } else {
+      final platform = ref.read(platformServiceProvider);
+      if (!await platform.isOverlayPermissionGranted()) {
+        await platform.requestOverlayPermission();
+        if (!await platform.isOverlayPermissionGranted()) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Overlay permission required for background monitoring')),
+            );
+          }
+          return;
+        }
+      }
       ref.read(startMonitoringProvider)();
     }
   }
