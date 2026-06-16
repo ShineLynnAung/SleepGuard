@@ -1,0 +1,404 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../../domain/enums/monitor_state.dart';
+import '../../data/repositories/settings_repository.dart';
+import '../providers/monitor_provider.dart';
+import '../providers/settings_provider.dart';
+
+class HomeScreen extends ConsumerStatefulWidget {
+  const HomeScreen({super.key});
+
+  @override
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends ConsumerState<HomeScreen>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _pulseController;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkDeviceAdmin();
+    _startMonitoringIfNeeded();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 1),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _checkDeviceAdmin() async {
+    final isAdmin = await ref.read(isDeviceAdminProvider.future);
+    if (!isAdmin && mounted) {
+      context.go('/onboarding');
+    }
+  }
+
+  Future<void> _startMonitoringIfNeeded() async {
+    final onboardingRepo = SettingsRepository();
+    final completed = await onboardingRepo.getOnboardingComplete();
+    if (completed && mounted) {
+      ref.read(startMonitoringProvider)();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final monitorState = ref.watch(monitorStateProvider);
+    final state = monitorState.valueOrNull ?? MonitorState.idle;
+
+    if (state == MonitorState.warning) {
+      return _buildWarningOverlay();
+    }
+
+    return Listener(
+      onPointerDown: (_) => _resetInteraction(),
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('SleepGuard'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.analytics),
+              onPressed: () => context.push('/analytics'),
+              tooltip: 'Analytics',
+            ),
+            IconButton(
+              icon: const Icon(Icons.settings),
+              onPressed: () => context.push('/settings'),
+              tooltip: 'Settings',
+            ),
+          ],
+        ),
+        body: RefreshIndicator(
+          onRefresh: () => Future.delayed(const Duration(seconds: 1)),
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              _buildStatusCard(state),
+              if (state == MonitorState.monitoring) ...[
+                const SizedBox(height: 16),
+                _buildCountdownCards(),
+              ],
+              const SizedBox(height: 24),
+              _buildDetectionConfig(),
+            ],
+          ),
+        ),
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: _toggleMonitoring,
+          icon: Icon(
+            state == MonitorState.monitoring ? Icons.stop : Icons.play_arrow,
+          ),
+          label: Text(
+            state == MonitorState.monitoring
+                ? 'Stop Monitoring'
+                : 'Start Monitoring',
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWarningOverlay() {
+    final countdown = ref.watch(warningCountdownProvider);
+
+    return PopScope(
+      canPop: false,
+      child: GestureDetector(
+        onTap: () => _cancelWarning(),
+        onPanDown: (_) => _cancelWarning(),
+        child: Scaffold(
+          backgroundColor: Colors.black.withValues(alpha: 0.95),
+          body: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                FadeTransition(
+                  opacity: _pulseController,
+                  child: const Icon(
+                    Icons.warning_amber_rounded,
+                    color: Colors.orange,
+                    size: 80,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  'Are you still awake?',
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Locking in ${countdown.valueOrNull ?? 15} seconds...',
+                  style: Theme.of(context).textTheme.displayLarge?.copyWith(
+                    color: Colors.orange,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 64,
+                  ),
+                ),
+                const SizedBox(height: 48),
+                ElevatedButton.icon(
+                  onPressed: () => _cancelWarning(),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 48,
+                      vertical: 16,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  icon: const Icon(Icons.nightlight_round, size: 28),
+                  label: const Text(
+                    "I'm Awake",
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Tap anywhere to dismiss',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.grey[600],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCountdownCards() {
+    final inactivityElapsed = ref.watch(inactivityElapsedProvider);
+    final cameraBlocked = ref.watch(cameraBlockedSecondsProvider);
+
+    final inactivitySecs = inactivityElapsed.valueOrNull ?? 0;
+    final inactivityTotal = 300;
+    final remaining = inactivityTotal - inactivitySecs;
+    final minutes = remaining ~/ 60;
+    final seconds = remaining % 60;
+    final timeStr = '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+
+    final camSecs = cameraBlocked.valueOrNull ?? 0;
+    final camRemaining = (30 - camSecs).clamp(0, 30);
+
+    return Column(
+      children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                const Icon(Icons.timer, color: Colors.blue, size: 28),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Inactivity Lock',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'if no interaction for 5 min',
+                        style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+                Text(
+                  timeStr,
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                const Icon(Icons.camera_alt, color: Colors.red, size: 28),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Camera Block Lock',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'if camera covered for 30s',
+                        style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+                Text(
+                  '${camRemaining}s',
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStatusCard(MonitorState state) {
+    final (icon, color, title, subtitle) = switch (state) {
+      MonitorState.idle => (
+        Icons.sensors_off,
+        Colors.grey,
+        'Monitoring Idle',
+        'Tap start to begin sleep detection'
+      ),
+      MonitorState.monitoring => (
+        Icons.monitor_heart,
+        Colors.green,
+        'Monitoring Active',
+        'SleepGuard is monitoring for sleep signals'
+      ),
+      MonitorState.warning => (
+        Icons.warning_amber_rounded,
+        Colors.orange,
+        'Warning!',
+        'Sleep detected - countdown in progress'
+      ),
+      MonitorState.locking => (
+        Icons.lock,
+        Colors.red,
+        'Locking Device',
+        'Device is being locked'
+      ),
+    };
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Row(
+          children: [
+            Icon(icon, color: color, size: 48),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      color: color,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Colors.grey[400],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetectionConfig() {
+    final settingsAsync = ref.watch(settingsProvider);
+    final config = settingsAsync.valueOrNull;
+    if (config == null) return const SizedBox.shrink();
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Settings',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 12),
+            _configRow(
+              'Inactivity Timeout',
+              '${config.inactivityTimeoutMinutes} min',
+              Icons.timer,
+            ),
+            _configRow(
+              'Warning Countdown',
+              '${config.warningCountdownSeconds} sec',
+              Icons.hourglass_bottom,
+            ),
+            _configRow(
+              'Camera Detection',
+              config.cameraDetectionEnabled ? 'Enabled' : 'Disabled',
+              Icons.camera_alt,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _configRow(String label, String value, IconData icon) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: Colors.grey[400]),
+          const SizedBox(width: 8),
+          Text(label, style: const TextStyle(color: Colors.grey)),
+          const Spacer(),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.w500)),
+        ],
+      ),
+    );
+  }
+
+  void _resetInteraction() {
+    ref.read(resetInteractionProvider)();
+  }
+
+  void _cancelWarning() {
+    ref.read(cancelWarningProvider)();
+  }
+
+  void _toggleMonitoring() {
+    final state = ref.read(monitorStateProvider).valueOrNull;
+    if (state == MonitorState.monitoring) {
+      ref.read(stopMonitoringProvider)();
+    } else {
+      ref.read(startMonitoringProvider)();
+    }
+  }
+}
