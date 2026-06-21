@@ -109,7 +109,6 @@ class TouchOverlayHelper(
             hideAll()
             ForegroundMonitorService.resetInteraction()
             channel.invokeMethod("onOverlayAwake", null)
-            bringAppToFront()
         }
 
         try {
