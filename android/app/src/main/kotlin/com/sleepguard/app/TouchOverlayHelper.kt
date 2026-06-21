@@ -5,7 +5,9 @@ import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PixelFormat
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Build
 import android.view.Gravity
@@ -61,6 +63,7 @@ class TouchOverlayHelper(
         val bubble = ExitBubble(context)
         bubble.setOnTapListener {
             hideAll()
+            ForegroundMonitorService.resetInteraction()
             channel.invokeMethod("onOverlayAwake", null)
             bringAppToFront()
         }
@@ -104,6 +107,7 @@ class TouchOverlayHelper(
         val overlay = AwakeOverlay(context)
         overlay.setOnAwakeListener {
             hideAll()
+            ForegroundMonitorService.resetInteraction()
             channel.invokeMethod("onOverlayAwake", null)
             bringAppToFront()
         }
@@ -223,32 +227,30 @@ class TouchOverlayHelper(
         private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.parseColor("#80FFFFFF")
         }
-        private val crossBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#CCFF5252")
-            setShadowLayer(12f, 0f, 4f, Color.parseColor("#66000000"))
+        private val buttonBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#FF4CAF50")
+            setShadowLayer(16f, 0f, 4f, Color.parseColor("#66000000"))
         }
-        private val crossPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        private val buttonTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
-            strokeWidth = 6f
-            strokeCap = Paint.Cap.ROUND
+            textSize = dpToPxF(22)
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.DEFAULT_BOLD
         }
-        private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        private val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.parseColor("#DD000000")
-            textSize = dpToPxF(24)
+            textSize = dpToPxF(28)
             textAlign = Paint.Align.CENTER
             typeface = Typeface.DEFAULT_BOLD
         }
         private val subTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.parseColor("#BB000000")
-            textSize = dpToPxF(14)
+            textSize = dpToPxF(16)
             textAlign = Paint.Align.CENTER
         }
 
         private val density = context.resources.displayMetrics.density
-
-        override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-            super.onSizeChanged(w, h, oldw, oldh)
-        }
+        private var buttonRect: RectF? = null
 
         fun setOnAwakeListener(listener: () -> Unit) {
             awakeListener = listener
@@ -256,15 +258,7 @@ class TouchOverlayHelper(
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
             if (event.action == MotionEvent.ACTION_UP) {
-                val cx = width / 2f
-                val cy = height / 2f
-                val radius = minOf(width, height) * 0.15f
-                val dx = event.x - cx
-                val dy = event.y - cy
-                val dist = Math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
-                if (dist <= radius) {
-                    awakeListener?.invoke()
-                }
+                awakeListener?.invoke()
             }
             return true
         }
@@ -274,18 +268,29 @@ class TouchOverlayHelper(
 
             val cx = width / 2f
             val cy = height / 2f
-            val radius = minOf(width, height) * 0.15f
 
-            val textY = cy - radius - dpToPxF(12)
-            canvas.drawText("Are you still awake?", cx, textY, textPaint)
+            val buttonWidth = dpToPxF(280)
+            val buttonHeight = dpToPxF(64)
+            val buttonLeft = cx - buttonWidth / 2f
+            val buttonTop = cy - buttonHeight / 2f
+            val buttonRight = cx + buttonWidth / 2f
+            val buttonBottom = cy + buttonHeight / 2f
 
-            val subTextY = cy - radius - dpToPxF(32)
-            canvas.drawText("Tap the X if you're awake", cx, subTextY, subTextPaint)
+            buttonRect = RectF(buttonLeft, buttonTop, buttonRight, buttonBottom)
 
-            canvas.drawCircle(cx, cy, radius, crossBgPaint)
-            val pad = radius * 0.35f
-            canvas.drawLine(cx - pad, cy - pad, cx + pad, cy + pad, crossPaint)
-            canvas.drawLine(cx + pad, cy - pad, cx - pad, cy + pad, crossPaint)
+            val titleY = buttonTop - dpToPxF(48)
+            canvas.drawText("Are you still awake?", cx, titleY, titlePaint)
+
+            val subTextY = buttonTop - dpToPxF(24)
+            canvas.drawText("Tap the button to continue using your phone", cx, subTextY, subTextPaint)
+
+            val radius = dpToPxF(16)
+            val buttonPath = Path().apply {
+                addRoundRect(buttonRect!!, radius, radius, Path.Direction.CW)
+            }
+            canvas.drawPath(buttonPath, buttonBgPaint)
+
+            canvas.drawText("I'm Awake", cx, buttonTop + buttonHeight / 2f + dpToPxF(8), buttonTextPaint)
         }
 
         private fun dpToPxF(dp: Int): Float {

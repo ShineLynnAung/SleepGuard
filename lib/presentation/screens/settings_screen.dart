@@ -13,8 +13,6 @@ String formatTimeout(int minutes) {
   return '$minutes min';
 }
 
-const int _timeoutDivisions = 179;
-
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
@@ -25,7 +23,7 @@ class SettingsScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: settingsAsync.when(
-        data: (config) => _SettingsForm(config: config, ref: ref),
+        data: (config) => _SettingsForm(config: config),
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Error: $e')),
       ),
@@ -33,30 +31,60 @@ class SettingsScreen extends ConsumerWidget {
   }
 }
 
-class _SettingsForm extends StatelessWidget {
+class _SettingsForm extends ConsumerStatefulWidget {
   final DetectionConfig config;
-  final WidgetRef ref;
 
-  const _SettingsForm({required this.config, required this.ref});
+  const _SettingsForm({required this.config});
+
+  @override
+  ConsumerState<_SettingsForm> createState() => _SettingsFormState();
+}
+
+class _SettingsFormState extends ConsumerState<_SettingsForm> {
+  late TextEditingController _timeoutController;
+
+  @override
+  void initState() {
+    super.initState();
+    _timeoutController = TextEditingController(
+      text: widget.config.inactivityTimeoutMinutes.toString(),
+    );
+  }
+
+  @override
+  void didUpdateWidget(_SettingsForm oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.config.inactivityTimeoutMinutes != widget.config.inactivityTimeoutMinutes) {
+      _timeoutController.text = widget.config.inactivityTimeoutMinutes.toString();
+    }
+  }
+
+  @override
+  void dispose() {
+    _timeoutController.dispose();
+    super.dispose();
+  }
+
+  void _onTimeoutSubmitted(String value) {
+    final parsed = int.tryParse(value);
+    if (parsed != null && parsed >= 1 && parsed <= 180) {
+      ref.read(settingsProvider.notifier).updateInactivityTimeout(parsed);
+    } else {
+      _timeoutController.text = widget.config.inactivityTimeoutMinutes.toString();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final config = widget.config;
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
         _buildSection(
           'Detection Timing',
           [
-            _buildSliderTile(
-              'Inactivity Timeout',
-              formatTimeout(config.inactivityTimeoutMinutes),
-              config.inactivityTimeoutMinutes.toDouble(),
-              1,
-              180,
-              (val) => ref
-                  .read(settingsProvider.notifier)
-                  .updateInactivityTimeout(val.round()),
-            ),
+            _buildTimeoutTile(config),
             _buildSliderTile(
               'Warning Countdown',
               '${config.warningCountdownSeconds} seconds',
@@ -100,13 +128,42 @@ class _SettingsForm extends StatelessWidget {
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
-                color: Theme.of(ref.context).colorScheme.primary,
+                color: Theme.of(context).colorScheme.primary,
               ),
             ),
             const SizedBox(height: 8),
             ...children,
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildTimeoutTile(DetectionConfig config) {
+    return ListTile(
+      title: const Text('Inactivity Timeout'),
+      subtitle: Row(
+        children: [
+          SizedBox(
+            width: 80,
+            child: TextField(
+              controller: _timeoutController,
+              keyboardType: TextInputType.number,
+              textAlign: TextAlign.center,
+              decoration: const InputDecoration(
+                contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              onSubmitted: _onTimeoutSubmitted,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            formatTimeout(config.inactivityTimeoutMinutes),
+            style: const TextStyle(fontWeight: FontWeight.w500),
+          ),
+        ],
       ),
     );
   }
@@ -119,7 +176,7 @@ class _SettingsForm extends StatelessWidget {
     double max,
     ValueChanged<double> onChanged,
   ) {
-    final divisions = max == 180 ? _timeoutDivisions : ((max - min) / 5).round();
+    final divisions = ((max - min) / 5).round();
 
     return ListTile(
       title: Text(label),

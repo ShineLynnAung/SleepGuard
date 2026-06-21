@@ -169,6 +169,11 @@ class MainActivity : FlutterActivity() {
                     ForegroundMonitorService.inactivityTimeoutSeconds = seconds
                     result.success(true)
                 }
+                "setNativeAwakeCountdown" -> {
+                    val seconds = call.arguments as? Int ?: 15
+                    ForegroundMonitorService.awakeCountdownSeconds = seconds
+                    result.success(true)
+                }
                 else -> result.notImplemented()
             }
         }

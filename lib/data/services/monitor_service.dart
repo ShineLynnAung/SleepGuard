@@ -38,6 +38,7 @@ class MonitorService {
   void updateConfig(DetectionConfig config) {
     _config = config;
     _platformService.setNativeInactivityTimeout(config.inactivityTimeoutMinutes * 60);
+    _platformService.setNativeAwakeCountdown(config.warningCountdownSeconds);
   }
 
   Future<void> startMonitoring() async {
@@ -52,6 +53,9 @@ class MonitorService {
 
     await _platformService.setNativeInactivityTimeout(
       _config.inactivityTimeoutMinutes * 60,
+    );
+    await _platformService.setNativeAwakeCountdown(
+      _config.warningCountdownSeconds,
     );
     await _platformService.startForegroundService();
 

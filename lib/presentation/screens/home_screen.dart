@@ -85,8 +85,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   }
 
   Future<void> _onAppBackgrounded() async {
-    final isMonitoring = ref.read(monitorStateProvider).valueOrNull == MonitorState.monitoring;
-    if (!isMonitoring) return;
+    final currentState = ref.read(monitorStateProvider).valueOrNull;
+    if (currentState != MonitorState.monitoring && currentState != MonitorState.warning) return;
 
     try {
       final platform = ref.read(platformServiceProvider);

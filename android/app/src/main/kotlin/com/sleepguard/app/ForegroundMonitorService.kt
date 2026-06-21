@@ -52,7 +52,8 @@ class ForegroundMonitorService : Service() {
         var awakeCountdown = 0
             private set
 
-        const val DEFAULT_AWAKE_COUNTDOWN_SECONDS = 60
+        @Volatile
+        var awakeCountdownSeconds = 15
 
         private var isLocking = false
         private var lastBrightness = 255.0
@@ -83,6 +84,7 @@ class ForegroundMonitorService : Service() {
             awakeCountdown = 0
             lastBrightness = 255.0
             lastCameraTouchMs = System.currentTimeMillis()
+            TouchOverlayHelper.lastTouchTimeMs = System.currentTimeMillis()
         }
 
         fun getLastTouchTimeMs(): Long = TouchOverlayHelper.lastTouchTimeMs.coerceAtLeast(lastCameraTouchMs)
@@ -168,7 +170,7 @@ class ForegroundMonitorService : Service() {
 
         if (elapsedSeconds >= inactivityTimeoutSeconds && !isWaitingForAwake) {
             isWaitingForAwake = true
-            awakeCountdown = DEFAULT_AWAKE_COUNTDOWN_SECONDS
+            awakeCountdown = awakeCountdownSeconds
             onAwakeTimeoutReached?.invoke()
             pushState()
             return

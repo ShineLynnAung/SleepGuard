@@ -232,6 +232,14 @@ class PlatformService {
       // ignore
     }
   }
+
+  Future<void> setNativeAwakeCountdown(int seconds) async {
+    try {
+      await _channel.invokeMethod('setNativeAwakeCountdown', seconds);
+    } on PlatformException {
+      // ignore
+    }
+  }
 }
 
 class _OverlayTouchController {
