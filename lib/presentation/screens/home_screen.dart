@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../domain/enums/monitor_state.dart';
+import '../../domain/models/detection_config.dart';
 import '../../data/repositories/settings_repository.dart';
 import '../../data/services/platform_service.dart';
 import '../providers/monitor_provider.dart';
@@ -21,6 +22,33 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   StreamSubscription<int>? _overlaySub;
   bool _wasMinimizedWithOverlay = false;
 
+  String _formatRemaining(int totalSeconds, int elapsedSeconds) {
+    final remaining = (totalSeconds - elapsedSeconds).clamp(0, totalSeconds);
+    final m = remaining ~/ 60;
+    final s = remaining % 60;
+    if (totalSeconds >= 3600) {
+      final h = m ~/ 60;
+      final mins = m % 60;
+      return '${h}h ${mins.toString().padLeft(2, '0')}m ${s.toString().padLeft(2, '0')}s';
+    }
+    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+  }
+
+  String _formatTimeoutLabel(int totalSeconds) {
+    final minutes = totalSeconds ~/ 60;
+    if (minutes >= 60) {
+      final hrs = minutes ~/ 60;
+      final mins = minutes % 60;
+      if (mins == 0) return '$hrs hr of inactivity';
+      return '${hrs} hr ${mins} min of inactivity';
+    }
+    return '$minutes min of inactivity';
+  }
+
+  DetectionConfig? _getConfig() {
+    return ref.read(settingsProvider).valueOrNull;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -32,8 +60,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       duration: const Duration(seconds: 1),
     )..repeat(reverse: true);
     _overlaySub = PlatformService.touchController.touchStream.listen((ts) {
-      if (ts == -1 && mounted) {
-        ref.read(stopMonitoringProvider)();
+      if (ts == -2 && mounted) {
+        ref.read(resetInteractionProvider)();
+        ref.read(platformServiceProvider).hideOverlay();
       }
     });
   }
@@ -66,7 +95,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         if (!await platform.isOverlayPermissionGranted()) return;
       }
       _wasMinimizedWithOverlay = true;
-      await platform.showOverlay();
     } catch (_) {}
   }
 
@@ -78,8 +106,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       final showing = await ref.read(platformServiceProvider).isOverlayShowing();
       if (showing) {
         ref.read(resetInteractionProvider)();
-      } else if (mounted) {
-        ref.read(stopMonitoringProvider)();
+        await ref.read(platformServiceProvider).hideOverlay();
       }
     } catch (_) {}
   }
@@ -233,13 +260,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   Widget _buildCountdownCards() {
     final inactivityElapsed = ref.watch(inactivityElapsedProvider);
     final cameraBlocked = ref.watch(cameraBlockedSecondsProvider);
+    final config = _getConfig();
+    final timeoutTotal = (config?.inactivityTimeoutMinutes ?? 5) * 60;
 
     final inactivitySecs = inactivityElapsed.valueOrNull ?? 0;
-    final inactivityTotal = 300;
-    final remaining = inactivityTotal - inactivitySecs;
-    final minutes = remaining ~/ 60;
-    final seconds = remaining % 60;
-    final timeStr = '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
 
     final camSecs = cameraBlocked.valueOrNull ?? 0;
     final camRemaining = (30 - camSecs).clamp(0, 30);
@@ -263,14 +287,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'if no interaction for 5 min',
+                        _formatTimeoutLabel(timeoutTotal),
                         style: TextStyle(color: Colors.grey[400], fontSize: 12),
                       ),
                     ],
                   ),
                 ),
                 Text(
-                  timeStr,
+                  _formatRemaining(timeoutTotal, inactivitySecs),
                   style: const TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
@@ -401,7 +425,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             const SizedBox(height: 12),
             _configRow(
               'Inactivity Timeout',
-              '${config.inactivityTimeoutMinutes} min',
+              _formatTimeoutLabel(config.inactivityTimeoutMinutes * 60),
               Icons.timer,
             ),
             _configRow(

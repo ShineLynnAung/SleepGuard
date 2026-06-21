@@ -21,6 +21,7 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private val channel = "com.sleepguard.app/channel"
     private val cameraEventChannel = "com.sleepguard.app/camera_brightness"
+    private val monitorEventChannel = "com.sleepguard.app/monitor_state"
     private lateinit var devicePolicyManager: DevicePolicyManager
     private lateinit var componentName: ComponentName
     private var cameraAnalyzer: CameraBrightnessAnalyzer? = null
@@ -55,6 +56,26 @@ class MainActivity : FlutterActivity() {
             }
         })
 
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            monitorEventChannel
+        ).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
+                ForegroundMonitorService.monitorEventSink = events
+            }
+
+            override fun onCancel(arguments: Any?) {
+                ForegroundMonitorService.monitorEventSink = null
+            }
+        })
+
+        ForegroundMonitorService.onAwakeTimeoutReached = {
+            mainHandler.post {
+                showAwakeOverlay()
+                methodChannel?.invokeMethod("onInactivityTimeoutReached", null)
+            }
+        }
+
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             channel
@@ -62,6 +83,10 @@ class MainActivity : FlutterActivity() {
             when (call.method) {
                 "lockScreen" -> {
                     lockScreen()
+                    result.success(true)
+                }
+                "lockFromTimeout" -> {
+                    ForegroundMonitorService.serviceInstance?.executeLock()
                     result.success(true)
                 }
                 "startForegroundService" -> {
@@ -97,8 +122,16 @@ class MainActivity : FlutterActivity() {
                     stopCameraMonitor()
                     result.success(true)
                 }
-                "showOverlay" -> {
-                    showOverlay()
+                "showExitOverlay" -> {
+                    showExitOverlay()
+                    result.success(true)
+                }
+                "showAwakeOverlay" -> {
+                    showAwakeOverlay()
+                    result.success(true)
+                }
+                "hideAwakeOverlay" -> {
+                    hideOverlay()
                     result.success(true)
                 }
                 "hideOverlay" -> {
@@ -216,7 +249,7 @@ class MainActivity : FlutterActivity() {
         )
     }
 
-    private fun showOverlay() {
+    private fun showExitOverlay() {
         if (touchOverlayHelper == null) {
             val mc = methodChannel ?: MethodChannel(
                 flutterEngine?.dartExecutor?.binaryMessenger ?: return,
@@ -224,7 +257,18 @@ class MainActivity : FlutterActivity() {
             )
             touchOverlayHelper = TouchOverlayHelper(this, mc)
         }
-        touchOverlayHelper?.show()
+        touchOverlayHelper?.showExitBubble()
+    }
+
+    private fun showAwakeOverlay() {
+        if (touchOverlayHelper == null) {
+            val mc = methodChannel ?: MethodChannel(
+                flutterEngine?.dartExecutor?.binaryMessenger ?: return,
+                channel
+            )
+            touchOverlayHelper = TouchOverlayHelper(this, mc)
+        }
+        touchOverlayHelper?.showAwakeOverlay()
     }
 
     private fun hideOverlay() {

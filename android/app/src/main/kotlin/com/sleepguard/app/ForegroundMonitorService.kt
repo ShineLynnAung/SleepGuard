@@ -14,6 +14,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
+import io.flutter.plugin.common.EventChannel
 
 class ForegroundMonitorService : Service() {
     companion object {
@@ -43,6 +44,16 @@ class ForegroundMonitorService : Service() {
         var isMonitoring = false
             private set
 
+        @Volatile
+        var isWaitingForAwake = false
+            private set
+
+        @Volatile
+        var awakeCountdown = 0
+            private set
+
+        const val DEFAULT_AWAKE_COUNTDOWN_SECONDS = 60
+
         private var isLocking = false
         private var lastBrightness = 255.0
         private var lastCameraTouchMs = System.currentTimeMillis()
@@ -50,7 +61,13 @@ class ForegroundMonitorService : Service() {
         private var tickRunnable: Runnable? = null
         private var devicePolicyManager: DevicePolicyManager? = null
         private var componentName: ComponentName? = null
-        private var serviceInstance: ForegroundMonitorService? = null
+        @Volatile
+        var serviceInstance: ForegroundMonitorService? = null
+            private set
+
+        var onAwakeTimeoutReached: (() -> Unit)? = null
+
+        var monitorEventSink: EventChannel.EventSink? = null
 
         fun reportBrightness(brightness: Double) {
             lastBrightness = brightness
@@ -62,6 +79,8 @@ class ForegroundMonitorService : Service() {
             elapsedSeconds = 0
             cameraBlockedSeconds = 0
             isCameraBlocked = false
+            isWaitingForAwake = false
+            awakeCountdown = 0
             lastBrightness = 255.0
             lastCameraTouchMs = System.currentTimeMillis()
         }
@@ -91,6 +110,8 @@ class ForegroundMonitorService : Service() {
         startForeground(NOTIFICATION_ID, notification)
         isMonitoring = true
         isLocking = false
+        isWaitingForAwake = false
+        awakeCountdown = 0
         elapsedSeconds = 0
         cameraBlockedSeconds = 0
         isCameraBlocked = false
@@ -105,6 +126,8 @@ class ForegroundMonitorService : Service() {
         super.onDestroy()
         isMonitoring = false
         isLocking = false
+        isWaitingForAwake = false
+        awakeCountdown = 0
         stopTickLoop()
         releaseWakeLock()
         serviceInstance = null
@@ -128,23 +151,37 @@ class ForegroundMonitorService : Service() {
     }
 
     private fun tick() {
-        if (!isMonitoring || isLocking) return
+        if (!isMonitoring || isLocking) {
+            pushState()
+            return
+        }
 
         val now = System.currentTimeMillis()
 
-        // Inactivity check — only when overlay is NOT visible (no global touch capture)
-        if (!TouchOverlayHelper.isOverlayVisible) {
-            val touchTime = getLastTouchTimeMs()
-            if (touchTime > 0) {
-                val idleMs = now - touchTime
-                val idleSeconds = (idleMs / 1000).toInt()
-                elapsedSeconds = idleSeconds.coerceAtMost(inactivityTimeoutSeconds)
-            }
+        // Inactivity check — runs regardless of overlay visibility
+        val touchTime = getLastTouchTimeMs()
+        if (touchTime > 0) {
+            val idleMs = now - touchTime
+            val idleSeconds = (idleMs / 1000).toInt()
+            elapsedSeconds = idleSeconds.coerceAtMost(inactivityTimeoutSeconds)
+        }
 
-            if (elapsedSeconds >= inactivityTimeoutSeconds) {
+        if (elapsedSeconds >= inactivityTimeoutSeconds && !isWaitingForAwake) {
+            isWaitingForAwake = true
+            awakeCountdown = DEFAULT_AWAKE_COUNTDOWN_SECONDS
+            onAwakeTimeoutReached?.invoke()
+            pushState()
+            return
+        }
+
+        if (isWaitingForAwake) {
+            awakeCountdown--
+            if (awakeCountdown <= 0) {
                 executeLock()
                 return
             }
+            pushState()
+            return
         }
 
         // Camera blocked check
@@ -158,9 +195,22 @@ class ForegroundMonitorService : Service() {
             executeLock()
             return
         }
+        pushState()
     }
 
-    private fun executeLock() {
+    private fun pushState() {
+        val sink = monitorEventSink ?: return
+        val map = HashMap<String, Any>()
+        map["elapsedSeconds"] = elapsedSeconds
+        map["cameraBlockedSeconds"] = cameraBlockedSeconds
+        map["isCameraBlocked"] = isCameraBlocked
+        map["isWaitingForAwake"] = isWaitingForAwake
+        map["awakeCountdown"] = awakeCountdown
+        sink.success(map)
+    }
+
+    fun executeLock() {
+        if (isLocking) return
         isLocking = true
         try {
             val dpm = devicePolicyManager

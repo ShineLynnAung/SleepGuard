@@ -7,26 +7,47 @@ class PlatformService {
     AppConstants.channelSleepGuard,
   );
 
+  static const EventChannel _monitorStateChannel = EventChannel(
+    'com.sleepguard.app/monitor_state',
+  );
+
   static final _touchController = _OverlayTouchController();
   static bool _initialized = false;
 
+  static final StreamController<Map<String, dynamic>> _monitorStateController =
+      StreamController<Map<String, dynamic>>.broadcast();
+
   static _OverlayTouchController get touchController => _touchController;
+  static Stream<Map<String, dynamic>> get monitorStateStream =>
+      _monitorStateController.stream;
 
   static void init() {
     if (_initialized) return;
     _initialized = true;
     _channel.setMethodCallHandler(_handleMethodCall);
+    _monitorStateChannel.receiveBroadcastStream().listen((event) {
+      if (event is Map) {
+        _monitorStateController.add(Map<String, dynamic>.from(event));
+      }
+    });
   }
 
   static Future<dynamic> _handleMethodCall(MethodCall call) async {
     switch (call.method) {
       case 'onOverlayTouch':
-        _touchController.emitTouch(DateTime.now().millisecondsSinceEpoch);
+        _touchController.emitTouch(
+          DateTime.now().millisecondsSinceEpoch,
+        );
         return null;
       case 'onOverlayExit':
         _touchController.emitTouch(-1);
         return null;
+      case 'onOverlayAwake':
+        _touchController.emitTouch(-2);
+        return null;
       case 'onOverlayPermissionResult':
+        return null;
+      case 'onInactivityTimeoutReached':
         return null;
       default:
         throw MissingPluginException();
@@ -38,6 +59,14 @@ class PlatformService {
       await _channel.invokeMethod(AppConstants.methodLockScreen);
     } on PlatformException catch (e) {
       throw Exception('Failed to lock screen: ${e.message}');
+    }
+  }
+
+  Future<void> lockFromTimeout() async {
+    try {
+      await _channel.invokeMethod('lockFromTimeout');
+    } on PlatformException catch (e) {
+      throw Exception('Failed to lock from timeout: ${e.message}');
     }
   }
 
@@ -86,7 +115,9 @@ class PlatformService {
 
   Future<bool> isCameraPermissionGranted() async {
     try {
-      final result = await _channel.invokeMethod<bool>('isCameraPermissionGranted');
+      final result = await _channel.invokeMethod<bool>(
+        'isCameraPermissionGranted',
+      );
       return result ?? false;
     } on PlatformException {
       return false;
@@ -95,18 +126,28 @@ class PlatformService {
 
   Future<bool> requestCameraPermission() async {
     try {
-      final result = await _channel.invokeMethod<bool>('requestCameraPermission');
+      final result = await _channel.invokeMethod<bool>(
+        'requestCameraPermission',
+      );
       return result ?? false;
     } on PlatformException {
       return false;
     }
   }
 
-  Future<void> showOverlay() async {
+  Future<void> showExitOverlay() async {
     try {
-      await _channel.invokeMethod('showOverlay');
+      await _channel.invokeMethod('showExitOverlay');
     } on PlatformException catch (e) {
-      throw Exception('Failed to show overlay: ${e.message}');
+      throw Exception('Failed to show exit overlay: ${e.message}');
+    }
+  }
+
+  Future<void> showAwakeOverlay() async {
+    try {
+      await _channel.invokeMethod('showAwakeOverlay');
+    } on PlatformException catch (e) {
+      throw Exception('Failed to show awake overlay: ${e.message}');
     }
   }
 
@@ -129,7 +170,9 @@ class PlatformService {
 
   Future<int> getLastOverlayTouchTime() async {
     try {
-      final result = await _channel.invokeMethod<int>('getLastOverlayTouchTime');
+      final result = await _channel.invokeMethod<int>(
+        'getLastOverlayTouchTime',
+      );
       return result ?? 0;
     } on PlatformException {
       return 0;
@@ -138,7 +181,9 @@ class PlatformService {
 
   Future<bool> isOverlayPermissionGranted() async {
     try {
-      final result = await _channel.invokeMethod<bool>('isOverlayPermissionGranted');
+      final result = await _channel.invokeMethod<bool>(
+        'isOverlayPermissionGranted',
+      );
       return result ?? false;
     } on PlatformException {
       return false;
@@ -153,30 +198,19 @@ class PlatformService {
     }
   }
 
-  Future<int> getNativeElapsedSeconds() async {
+  Future<void> startCameraMonitor() async {
     try {
-      final result = await _channel.invokeMethod<int>('getNativeElapsedSeconds');
-      return result ?? 0;
+      await _channel.invokeMethod('startCameraMonitor');
     } on PlatformException {
-      return 0;
+      // ignore
     }
   }
 
-  Future<int> getNativeCameraBlockedSeconds() async {
+  Future<void> stopCameraMonitor() async {
     try {
-      final result = await _channel.invokeMethod<int>('getNativeCameraBlockedSeconds');
-      return result ?? 0;
+      await _channel.invokeMethod('stopCameraMonitor');
     } on PlatformException {
-      return 0;
-    }
-  }
-
-  Future<bool> getNativeIsCameraBlocked() async {
-    try {
-      final result = await _channel.invokeMethod<bool>('getNativeIsCameraBlocked');
-      return result ?? false;
-    } on PlatformException {
-      return false;
+      // ignore
     }
   }
 
@@ -190,7 +224,10 @@ class PlatformService {
 
   Future<void> setNativeInactivityTimeout(int seconds) async {
     try {
-      await _channel.invokeMethod('setNativeInactivityTimeout', seconds);
+      await _channel.invokeMethod(
+        'setNativeInactivityTimeout',
+        seconds,
+      );
     } on PlatformException {
       // ignore
     }

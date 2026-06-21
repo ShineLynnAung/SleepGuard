@@ -4,15 +4,13 @@ import '../../domain/models/detection_config.dart';
 import '../../data/services/monitor_service.dart';
 import '../../data/services/platform_service.dart';
 import '../providers/settings_provider.dart';
-import '../providers/analytics_provider.dart';
 
 final platformServiceProvider = Provider<PlatformService>((ref) {
   return PlatformService();
 });
 
 final monitorServiceProvider = Provider<MonitorService>((ref) {
-  final analyticsRepo = ref.read(analyticsRepositoryProvider);
-  final service = MonitorService(analyticsRepository: analyticsRepo);
+  final service = MonitorService();
   ref.onDispose(() => service.dispose());
   return service;
 });

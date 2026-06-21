@@ -3,6 +3,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../domain/models/detection_config.dart';
 import '../providers/settings_provider.dart';
 
+String formatTimeout(int minutes) {
+  if (minutes >= 60) {
+    final hrs = minutes ~/ 60;
+    final mins = minutes % 60;
+    if (mins == 0) return '$hrs hr';
+    return '${hrs} hr ${mins} min';
+  }
+  return '$minutes min';
+}
+
+const int _timeoutDivisions = 179;
+
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
@@ -37,11 +49,10 @@ class _SettingsForm extends StatelessWidget {
           [
             _buildSliderTile(
               'Inactivity Timeout',
-              '${config.inactivityTimeoutMinutes} minutes',
+              formatTimeout(config.inactivityTimeoutMinutes),
               config.inactivityTimeoutMinutes.toDouble(),
               1,
-              30,
-              1,
+              180,
               (val) => ref
                   .read(settingsProvider.notifier)
                   .updateInactivityTimeout(val.round()),
@@ -52,7 +63,6 @@ class _SettingsForm extends StatelessWidget {
               config.warningCountdownSeconds.toDouble(),
               5,
               60,
-              5,
               (val) => ref
                   .read(settingsProvider.notifier)
                   .updateCountdownDuration(val.round()),
@@ -107,9 +117,10 @@ class _SettingsForm extends StatelessWidget {
     double sliderValue,
     double min,
     double max,
-    double divisions,
     ValueChanged<double> onChanged,
   ) {
+    final divisions = max == 180 ? _timeoutDivisions : ((max - min) / 5).round();
+
     return ListTile(
       title: Text(label),
       subtitle: Column(
@@ -120,7 +131,7 @@ class _SettingsForm extends StatelessWidget {
             value: sliderValue,
             min: min,
             max: max,
-            divisions: ((max - min) / divisions).round(),
+            divisions: divisions,
             label: value,
             onChanged: onChanged,
           ),

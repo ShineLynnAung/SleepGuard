@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.os.Build
 import android.view.Gravity
 import android.view.MotionEvent
@@ -26,13 +27,13 @@ class TouchOverlayHelper(
 
     private var windowManager: WindowManager? = null
     private var bubbleView: ExitBubble? = null
+    private var awakeOverlayView: AwakeOverlay? = null
     private var _isShowing = false
 
     fun isShowing(): Boolean = _isShowing
 
-    fun show() {
-        if (_isShowing) return
-
+    fun showExitBubble() {
+        hideAll()
         windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val layoutFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -58,13 +59,9 @@ class TouchOverlayHelper(
         }
 
         val bubble = ExitBubble(context)
-        bubble.setOnExitListener {
-            _isShowing = false
-            bubbleView = null
-            windowManager?.let { wm ->
-                try { wm.removeView(bubble) } catch (_: Exception) {}
-            }
-            channel.invokeMethod("onOverlayExit", null)
+        bubble.setOnTapListener {
+            hideAll()
+            channel.invokeMethod("onOverlayAwake", null)
             bringAppToFront()
         }
 
@@ -79,12 +76,62 @@ class TouchOverlayHelper(
         }
     }
 
+    fun showAwakeOverlay() {
+        hideAll()
+        windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+
+        val layoutFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            layoutFlag,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_DIM_BEHIND,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.CENTER
+            dimAmount = 0.6f
+        }
+
+        val overlay = AwakeOverlay(context)
+        overlay.setOnAwakeListener {
+            hideAll()
+            channel.invokeMethod("onOverlayAwake", null)
+            bringAppToFront()
+        }
+
+        try {
+            windowManager?.addView(overlay, params)
+            _isShowing = true
+            isOverlayVisible = true
+            awakeOverlayView = overlay
+            lastTouchTimeMs = System.currentTimeMillis()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     fun hide() {
-        if (!_isShowing) return
+        hideAll()
+    }
+
+    private fun hideAll() {
         bubbleView?.let { v ->
             try { windowManager?.removeView(v) } catch (_: Exception) {}
         }
         bubbleView = null
+        awakeOverlayView?.let { v ->
+            try { windowManager?.removeView(v) } catch (_: Exception) {}
+        }
+        awakeOverlayView = null
         _isShowing = false
         isOverlayVisible = false
     }
@@ -108,7 +155,7 @@ class TouchOverlayHelper(
     }
 
     private class ExitBubble(context: Context) : View(context) {
-        private var exitListener: (() -> Unit)? = null
+        private var tapListener: (() -> Unit)? = null
 
         private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.parseColor("#CCFFFFFF")
@@ -124,8 +171,8 @@ class TouchOverlayHelper(
         private var offsetY = 0f
         private var isDragging = false
 
-        fun setOnExitListener(listener: () -> Unit) {
-            exitListener = listener
+        fun setOnTapListener(listener: () -> Unit) {
+            tapListener = listener
         }
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -148,7 +195,7 @@ class TouchOverlayHelper(
                 }
                 MotionEvent.ACTION_UP -> {
                     if (!isDragging) {
-                        exitListener?.invoke()
+                        tapListener?.invoke()
                     }
                     isDragging = false
                     return true
@@ -167,6 +214,82 @@ class TouchOverlayHelper(
             val pad = radius * 0.35f
             canvas.drawLine(cx - pad, cy - pad, cx + pad, cy + pad, xPaint)
             canvas.drawLine(cx + pad, cy - pad, cx - pad, cy + pad, xPaint)
+        }
+    }
+
+    private class AwakeOverlay(context: Context) : View(context) {
+        private var awakeListener: (() -> Unit)? = null
+
+        private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#80FFFFFF")
+        }
+        private val crossBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#CCFF5252")
+            setShadowLayer(12f, 0f, 4f, Color.parseColor("#66000000"))
+        }
+        private val crossPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            strokeWidth = 6f
+            strokeCap = Paint.Cap.ROUND
+        }
+        private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#DD000000")
+            textSize = dpToPxF(24)
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.DEFAULT_BOLD
+        }
+        private val subTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#BB000000")
+            textSize = dpToPxF(14)
+            textAlign = Paint.Align.CENTER
+        }
+
+        private val density = context.resources.displayMetrics.density
+
+        override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+            super.onSizeChanged(w, h, oldw, oldh)
+        }
+
+        fun setOnAwakeListener(listener: () -> Unit) {
+            awakeListener = listener
+        }
+
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            if (event.action == MotionEvent.ACTION_UP) {
+                val cx = width / 2f
+                val cy = height / 2f
+                val radius = minOf(width, height) * 0.15f
+                val dx = event.x - cx
+                val dy = event.y - cy
+                val dist = Math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
+                if (dist <= radius) {
+                    awakeListener?.invoke()
+                }
+            }
+            return true
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+
+            val cx = width / 2f
+            val cy = height / 2f
+            val radius = minOf(width, height) * 0.15f
+
+            val textY = cy - radius - dpToPxF(12)
+            canvas.drawText("Are you still awake?", cx, textY, textPaint)
+
+            val subTextY = cy - radius - dpToPxF(32)
+            canvas.drawText("Tap the X if you're awake", cx, subTextY, subTextPaint)
+
+            canvas.drawCircle(cx, cy, radius, crossBgPaint)
+            val pad = radius * 0.35f
+            canvas.drawLine(cx - pad, cy - pad, cx + pad, cy + pad, crossPaint)
+            canvas.drawLine(cx + pad, cy - pad, cx - pad, cy + pad, crossPaint)
+        }
+
+        private fun dpToPxF(dp: Int): Float {
+            return (dp * density)
         }
     }
 }
